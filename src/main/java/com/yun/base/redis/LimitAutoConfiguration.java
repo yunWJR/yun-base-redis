@@ -11,6 +11,6 @@ import org.springframework.context.annotation.Import;
 
 @Configuration
 @EnableConfigurationProperties(RedisLimitProperties.class)
-@Import({RedisLimitAutoConfiguration.class})
+@Import({RedisLimitAutoConfiguration.class, YunLimitAspect.class})
 public class LimitAutoConfiguration {
 }

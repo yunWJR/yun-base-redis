@@ -7,7 +7,9 @@ import org.springframework.stereotype.Component;
 
 import javax.annotation.PostConstruct;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * @author: yun
@@ -23,67 +25,71 @@ public class RedisLimit {
     private static final int FAIL_CODE = 0;
 
     @Autowired
-    private RedisTemplate<String, Object> redisTemplate1;
+    private RedisLimitProperties properties;
 
-    private int limit = 1;
-    private int expire_time = 20;
+    @Autowired
+    private RedisTemplate<String, Object> redisTemplate;
 
-    private String baseID = "limit";
-
-    /**
-     * 脚本
-     */
-    private String script;
+    private Map<String, RedisLimitPara> paraMap;
 
     @PostConstruct
     public void init() {
-        buildScript();
+        paraMap = new HashMap<String, RedisLimitPara>();
     }
 
-    public boolean checkLimit() {
-        Object result = limitRequest();
+    public void checkLimit() {
+        checkLimit(null);
+    }
 
-        if (FAIL_CODE != (Long) result) {
-            return true;
-        } else {
-            return false;
+    public void checkLimit(String key, int expireTime, int duration, int limitCount) {
+        RedisLimitPara para = getByKey(key, expireTime, duration, limitCount);
+
+        Object result = limitRequest(para);
+
+        if (FAIL_CODE == (Long) result) {
+            throw new YunLimitException(para);
         }
     }
 
-    private Object limitRequest() {
-        Object result = null;
-        String key = String.valueOf(System.currentTimeMillis() / 1000); // 按秒计算
+    public void checkLimit(String key) {
+        RedisLimitPara para = getByKey(key, properties.getExpire_time(), properties.getDuration(), properties.getLimitCount());
 
+        Object result = limitRequest(para);
+
+        if (FAIL_CODE == (Long) result) {
+            throw new YunLimitException(para);
+        }
+    }
+
+    private RedisLimitPara getByKey(String key, int expireTime, int duration, int limitCount) {
+        RedisLimitPara para = paraMap.get(key);
+        if (para == null) {
+            para = new RedisLimitPara(key, properties.getBaseKey(), expireTime, duration, limitCount);
+
+            paraMap.put(key, para);
+        }
+
+        return para;
+    }
+
+    private Object limitRequest(RedisLimitPara para) {
+        Object result;
+
+        long timeKey = System.currentTimeMillis() / 1000; // 按秒计算
+        timeKey = timeKey / para.getDuration();
+
+        // 时间作为 key
+        String key = String.valueOf(timeKey);
         List<String> keys = Collections.singletonList(key);
 
+        // 脚本
         DefaultRedisScript<Long> redisScript;
         redisScript = new DefaultRedisScript<Long>();
         redisScript.setResultType(Long.class);
-        redisScript.setScriptText(script);
+        redisScript.setScriptText(para.getScript());
 
-        result = redisTemplate1.execute(redisScript, keys, String.valueOf(limit), String.valueOf(expire_time));
+        result = redisTemplate.execute(redisScript, keys, String.valueOf(para.getLimitCount()), String.valueOf(para.getExpire_time()));
 
         return result;
     }
-
-    private void buildScript() {
-        script = "local key = \"epmg.api.limit:\" .. KEYS[1]\n" +
-                "local limit = tonumber(ARGV[1])\n" +
-                "local expire_time = ARGV[2]\n" +
-                "\n" +
-                "local is_exists = redis.call(\"EXISTS\", key)\n" +
-                "if is_exists == 1 then\n" +
-                "    if redis.call(\"INCR\", key) > limit then\n" +
-                "        return 0\n" +
-                "    else\n" +
-                "        return 1\n" +
-                "    end\n" +
-                "else\n" +
-                "    redis.call(\"SET\", key, 1)\n" +
-                "    redis.call(\"EXPIRE\", key, expire_time)\n" +
-                "    return 1\n" +
-                "end";
-    }
-
-
 }
